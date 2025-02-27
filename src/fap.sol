@@ -48,9 +48,6 @@ contract Fap is ReentrancyGuard {
         uint256 previousWaitTime = calculateWaitTime(lastDepositAmount);
         if (block.timestamp >= lastPlayedTime + previousWaitTime) {
             _handleWin();
-            // Refund current player since game is over
-            (bool refunded, ) = msg.sender.call{value: msg.value}("");
-            require(refunded, "Failed to refund player");
             return;
         }
 
@@ -60,15 +57,22 @@ contract Fap is ReentrancyGuard {
     }
 
     function _handleWin() private {
+        // Save current contract balance before new deposit
+        uint256 prizeAmount = address(this).balance - msg.value;
         address winner = lastPlayer;
-        uint256 prize = address(this).balance;
 
+        // Reset game state before transfers to prevent reentrancy
         _setEndGameState();
 
-        (bool sent, ) = winner.call{value: prize}("");
-        require(sent, "Failed to send ETH");
+        // First refund current player
+        (bool refunded, ) = msg.sender.call{value: msg.value}("");
+        require(refunded, "Failed to refund player");
 
-        emit GameWon(winner, prize);
+        // Then send prize to winner
+        (bool sent, ) = winner.call{value: prizeAmount}("");
+        require(sent, "Failed to send prize");
+
+        emit GameWon(winner, prizeAmount);
     }
 
     function _setFirstPlayState() private {

@@ -263,4 +263,179 @@ contract FapTest is Test {
     function absDiff(uint256 a, uint256 b) internal pure returns (uint256) {
         return a > b ? a - b : b - a;
     }
+
+    // Game state tests
+    function test_InitialState() public {
+        assertEq(fap.lastPlayedTime(), 0);
+        assertEq(fap.lastPlayer(), address(0));
+        assertEq(fap.lastDepositAmount(), 0);
+        assertEq(fap.gamesPlayed(), 0);
+        assertEq(fap.numberOfPlays(), 0);
+        assertFalse(fap.gameInProgress());
+    }
+
+    function test_StartGame() public {
+        vm.deal(address(this), 1 ether);
+        fap.startGame{value: 1 ether}();
+
+        assertTrue(fap.gameInProgress());
+        assertEq(fap.gamesPlayed(), 1);
+        assertEq(address(fap).balance, 1 ether);
+    }
+
+    function testFail_StartGameTwice() public {
+        fap.startGame();
+        fap.startGame();
+    }
+
+    function test_Play_FirstPlay() public {
+        // Start game
+        fap.startGame();
+
+        // First play
+        vm.deal(address(this), 1 ether);
+        fap.play{value: 1 ether}();
+
+        assertEq(fap.lastPlayer(), address(this));
+        assertEq(fap.lastDepositAmount(), 1 ether);
+        assertEq(fap.numberOfPlays(), 1);
+        assertTrue(fap.lastPlayedTime() > 0);
+    }
+
+    function test_Play_SecondPlay() public {
+        // Start game
+        fap.startGame();
+
+        // First play
+        vm.deal(address(this), 1 ether);
+        fap.play{value: 1 ether}();
+
+        // Second play from different address
+        address player2 = address(0x2);
+        vm.deal(player2, 2 ether);
+        vm.prank(player2);
+        fap.play{value: 2 ether}();
+
+        assertEq(fap.lastPlayer(), player2);
+        assertEq(fap.lastDepositAmount(), 2 ether);
+        assertEq(fap.numberOfPlays(), 2);
+    }
+
+    function test_Play_Win() public {
+        // Start game with initial balance
+        vm.deal(address(this), 1 ether);
+        fap.startGame{value: 1 ether}();
+
+        // First play
+        address player1 = address(0x1);
+        vm.deal(player1, 1 ether);
+        vm.prank(player1);
+        fap.play{value: 1 ether}();
+
+        // Record initial balances
+        uint256 initialBalance1 = player1.balance;
+        address player2 = address(0x2);
+        vm.deal(player2, 1 ether);
+        uint256 initialBalance2 = player2.balance;
+
+        // Wait for more than the wait time
+        uint256 waitTime = fap.calculateWaitTime(1 ether);
+        vm.warp(block.timestamp + waitTime + 1);
+
+        // Second play should trigger win for first player
+        vm.prank(player2);
+        fap.play{value: 1 ether}();
+
+        // Check player1 won and got the prize
+        assertEq(
+            player1.balance,
+            initialBalance1 + 2 ether,
+            "Winner should receive prize"
+        );
+        // Check player2 got refunded
+        assertEq(
+            player2.balance,
+            initialBalance2,
+            "Player2 should be refunded"
+        );
+        assertFalse(fap.gameInProgress(), "Game should be over");
+        assertEq(fap.lastPlayedTime(), 0, "Last played time should be reset");
+        assertEq(fap.lastPlayer(), address(0), "Last player should be reset");
+    }
+
+    function testFuzz_Play_ValidDeposits(uint256 deposit) public {
+        deposit = bound(deposit, 0.0001 ether, 10 ether);
+
+        fap.startGame();
+        vm.deal(address(this), deposit);
+        fap.play{value: deposit}();
+
+        assertEq(fap.lastDepositAmount(), deposit);
+    }
+
+    function testFail_Play_TooSmallDeposit() public {
+        fap.startGame();
+        vm.deal(address(this), 0.00009 ether);
+        fap.play{value: 0.00009 ether}();
+    }
+
+    function testFail_Play_TooLargeDeposit() public {
+        fap.startGame();
+        vm.deal(address(this), 11 ether);
+        fap.play{value: 11 ether}();
+    }
+
+    function testFail_Play_GameNotStarted() public {
+        vm.deal(address(this), 1 ether);
+        fap.play{value: 1 ether}();
+    }
+
+    // Event tests
+    event GameStarted(address indexed starter, uint256 initialPool);
+    event GameWon(address indexed winner, uint256 prize);
+    event Played(address indexed player, uint256 amount, uint256 waitTime);
+
+    // Invariant tests
+    function invariant_BalanceMatchesDeposits() public {
+        // Balance should match the sum of deposits when game is in progress
+        if (fap.gameInProgress()) {
+            assertEq(address(fap).balance, fap.lastDepositAmount());
+        } else {
+            assertEq(address(fap).balance, 0);
+        }
+    }
+
+    function invariant_ValidGameState() public {
+        if (fap.gameInProgress()) {
+            // During game
+            if (fap.numberOfPlays() > 0) {
+                assertTrue(
+                    fap.lastPlayedTime() > 0,
+                    "Last played time should be set"
+                );
+                assertTrue(
+                    fap.lastDepositAmount() >= 0.0001 ether,
+                    "Deposit should be >= MIN_DEPOSIT"
+                );
+                assertTrue(
+                    fap.lastDepositAmount() <= 10 ether,
+                    "Deposit should be <= MAX_DEPOSIT"
+                );
+            }
+        } else {
+            // Between games
+            assertEq(fap.lastPlayedTime(), 0);
+            assertEq(fap.lastPlayer(), address(0));
+            assertEq(fap.lastDepositAmount(), 0);
+            assertEq(fap.numberOfPlays(), 0);
+        }
+    }
+
+    // Receive function test
+    function test_ReceiveFunction() public {
+        vm.deal(address(this), 1 ether);
+        (bool success, ) = address(fap).call{value: 1 ether}("");
+        assertTrue(success);
+        assertEq(address(fap).balance, 1 ether);
+    }
 }
