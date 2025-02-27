@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 
 contract Fap is ReentrancyGuard {
     // Constants for deposit limits and time windows
@@ -99,58 +100,34 @@ contract Fap is ReentrancyGuard {
     ) public pure returns (uint256) {
         // Using natural log for scaling
         // Scale from ln(0.0001) to ln(10) to MAX_WAIT_TIME to MIN_WAIT_TIME
-        uint256 minLogValue = 9210340372; // ln(0.0001) * 1e9
-        uint256 maxLogValue = 2302585093; // ln(10) * 1e9
+        int256 minLogValue = -9210340372; // ln(0.0001) * 1e9 (negative since it's less than 1)
+        int256 maxLogValue = 2302585093; // ln(10) * 1e9
+
+        // Handle edge cases first to avoid rounding errors
+        if (depositAmount >= MAX_DEPOSIT) return MIN_WAIT_TIME;
+        if (depositAmount <= MIN_DEPOSIT) return MAX_WAIT_TIME;
 
         // Convert deposit amount to a decimal for log calculation
-        // We multiply by 1e9 to maintain precision
-        uint256 depositInEth = (depositAmount * 1e9) / 1 ether;
-        uint256 depositLogValue = _ln(depositInEth);
+        // We multiply by 1e18 to match Solady's precision
+        int256 depositInEth = int256((depositAmount * 1e18) / 1 ether);
+
+        // Get log value and scale down to 1e9
+        int256 depositLogValue = FixedPointMathLib.lnWad(depositInEth) / 1e9;
 
         // Linear interpolation between log values
-        uint256 timeRange = MAX_WAIT_TIME - MIN_WAIT_TIME;
-        uint256 logRange = minLogValue - maxLogValue; // Note: min is larger than max for negative logs
-        uint256 waitTime = MAX_WAIT_TIME -
-            (((minLogValue - depositLogValue) * timeRange) / logRange);
+        int256 logRange = maxLogValue - minLogValue;
+        int256 timeRange = int256(MAX_WAIT_TIME - MIN_WAIT_TIME);
+
+        // Calculate wait time using linear interpolation
+        int256 normalizedPosition = ((depositLogValue - minLogValue) *
+            timeRange) / logRange;
+        uint256 waitTime = uint256(int256(MAX_WAIT_TIME) - normalizedPosition);
+
+        // Ensure bounds
+        if (waitTime < MIN_WAIT_TIME) return MIN_WAIT_TIME;
+        if (waitTime > MAX_WAIT_TIME) return MAX_WAIT_TIME;
 
         return waitTime;
-    }
-
-    function _ln(uint256 x) private pure returns (uint256) {
-        // Scaled by 1e9
-        require(x > 0, "Log of zero");
-
-        // Handle numbers less than 1e9 (less than 1.0)
-        if (x < 1e9) {
-            // For numbers less than 1, we use ln(x) = -ln(1/x)
-            uint256 inverse = (1e18) / x;
-            return 2302585093 - _ln(inverse / 1e9); // ln(10) * 1e9
-        }
-
-        uint256 result = 0;
-        uint256 y = x;
-
-        while (y >= 1e9) {
-            result += 2302585093; // ln(10) * 1e9
-            y /= 10;
-        }
-
-        y = y * 1e9 - 1e9;
-
-        // Taylor series for ln(1+x)
-        uint256 term = y;
-        result += term;
-
-        for (uint256 i = 2; i <= 10; i++) {
-            term = (term * y) / (1e9 * i);
-            if (i % 2 == 1) {
-                result += term;
-            } else {
-                result -= term;
-            }
-        }
-
-        return result;
     }
 
     receive() external payable {}
