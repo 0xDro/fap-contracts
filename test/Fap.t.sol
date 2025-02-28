@@ -346,11 +346,16 @@ contract FapTest is Test {
         vm.prank(player2);
         fap.play{value: 1 ether}();
 
-        // Check player1 won and got the prize
+        // Calculate expected prize (total - 1% fee)
+        uint256 totalPrize = 2 ether; // Initial 1 ETH + first play 1 ETH
+        uint256 fee = (totalPrize * fap.FEE_PERCENTAGE()) / 100;
+        uint256 expectedPrize = totalPrize - fee;
+
+        // Check player1 won and got the prize minus fee
         assertEq(
             player1.balance,
-            initialBalance1 + 2 ether,
-            "Winner should receive prize"
+            initialBalance1 + expectedPrize,
+            "Winner should receive prize minus fee"
         );
         // Check player2 got refunded
         assertEq(
@@ -437,5 +442,103 @@ contract FapTest is Test {
         (bool success, ) = address(fap).call{value: 1 ether}("");
         assertTrue(success);
         assertEq(address(fap).balance, 1 ether);
+    }
+
+    function test_Fee_WhenGameWon() public {
+        // Start game with initial balance
+        vm.deal(address(this), 1 ether);
+        fap.startGame{value: 1 ether}();
+
+        // First play
+        address player1 = address(0x1);
+        vm.deal(player1, 1 ether);
+        vm.prank(player1);
+        fap.play{value: 1 ether}();
+
+        // Record initial balances
+        uint256 initialBalance1 = player1.balance;
+        address player2 = address(0x2);
+        vm.deal(player2, 1 ether);
+        uint256 initialBalance2 = player2.balance;
+        uint256 initialOwnerBalance = fap.owner().balance;
+
+        // Wait for more than the wait time
+        uint256 waitTime = fap.calculateWaitTime(1 ether);
+        vm.warp(block.timestamp + waitTime + 1);
+
+        // Second play should trigger win for first player
+        vm.prank(player2);
+        fap.play{value: 1 ether}();
+
+        // Calculate expected amounts
+        uint256 totalPrize = 2 ether; // Initial 1 ETH + first play 1 ETH
+        uint256 expectedFee = (totalPrize * fap.FEE_PERCENTAGE()) / 100; // 1% of 2 ETH
+        uint256 expectedPrize = totalPrize - expectedFee;
+
+        // Check balances
+        assertEq(
+            player1.balance,
+            initialBalance1 + expectedPrize,
+            "Winner should receive prize minus fee"
+        );
+        assertEq(
+            player2.balance,
+            initialBalance2,
+            "Player2 should be refunded"
+        );
+        assertEq(
+            fap.owner().balance,
+            initialOwnerBalance + expectedFee,
+            "Owner should receive fee"
+        );
+    }
+
+    function test_Fee_MultipleGames() public {
+        uint256 expectedTotalFees = 0;
+        feeCollected = 0; // Reset fee counter
+
+        // Play 3 games
+        for (uint256 i = 0; i < 3; i++) {
+            // Start game
+            vm.deal(address(this), 1 ether);
+            fap.startGame{value: 1 ether}();
+
+            // First play
+            address player1 = address(uint160(i + 1));
+            vm.deal(player1, 2 ether);
+            vm.prank(player1);
+            fap.play{value: 2 ether}();
+
+            // Calculate fee for this game
+            uint256 gamePrize = 3 ether; // 1 ETH initial + 2 ETH play
+            uint256 gameFee = (gamePrize * fap.FEE_PERCENTAGE()) / 100;
+            expectedTotalFees += gameFee;
+
+            // Wait and trigger win
+            uint256 waitTime = fap.calculateWaitTime(2 ether);
+            vm.warp(block.timestamp + waitTime + 1);
+
+            // Second play triggers win
+            address player2 = address(uint160(i + 100));
+            vm.deal(player2, 1 ether);
+            vm.prank(player2);
+            fap.play{value: 1 ether}();
+
+            // Reset timestamp for next game
+            vm.warp(block.timestamp + 1);
+        }
+
+        // Verify total fees collected
+        assertEq(
+            feeCollected,
+            expectedTotalFees,
+            "Owner should receive fees from all games"
+        );
+    }
+
+    // Track fees in receive function
+    uint256 public feeCollected;
+    receive() external payable {
+        feeCollected += msg.value;
     }
 }

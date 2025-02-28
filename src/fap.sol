@@ -11,6 +11,7 @@ contract Fap is ReentrancyGuard {
     uint256 public constant MAX_WAIT_TIME = 3600; // 1 hour in seconds
     uint256 public constant MIN_WAIT_TIME = 60; // 1 minute in seconds
     uint256 public constant INITIAL_POOL = 1 ether;
+    uint256 public constant FEE_PERCENTAGE = 1; // 1% fee
 
     // Game state variables
     uint256 public lastPlayedTime;
@@ -19,12 +20,15 @@ contract Fap is ReentrancyGuard {
     uint256 public gamesPlayed;
     uint256 public numberOfPlays;
     bool public gameInProgress;
+    address public immutable owner;
 
     event GameStarted(address indexed starter, uint256 initialPool);
     event GameWon(address indexed winner, uint256 prize);
     event Played(address indexed player, uint256 amount, uint256 waitTime);
 
-    constructor() {}
+    constructor() {
+        owner = msg.sender;
+    }
 
     function startGame() external payable {
         require(!gameInProgress, "Game already in progress");
@@ -61,6 +65,10 @@ contract Fap is ReentrancyGuard {
         uint256 prizeAmount = address(this).balance - msg.value;
         address winner = lastPlayer;
 
+        // Calculate fee
+        uint256 fee = (prizeAmount * FEE_PERCENTAGE) / 100;
+        uint256 winnerPrize = prizeAmount - fee;
+
         // Reset game state before transfers to prevent reentrancy
         _setEndGameState();
 
@@ -68,11 +76,16 @@ contract Fap is ReentrancyGuard {
         (bool refunded, ) = msg.sender.call{value: msg.value}("");
         require(refunded, "Failed to refund player");
 
+        // Send fee to owner
+        (bool feeSent, ) = owner.call{value: fee}("");
+        require(feeSent, "Failed to send fee");
+
         // Then send prize to winner
-        (bool sent, ) = winner.call{value: prizeAmount}("");
+        (bool sent, ) = winner.call{value: winnerPrize}("");
         require(sent, "Failed to send prize");
 
-        emit GameWon(winner, prizeAmount);
+        // Emit event with just the winner and their prize
+        emit GameWon(winner, winnerPrize);
     }
 
     function _setFirstPlayState() private {
