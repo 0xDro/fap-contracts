@@ -8,7 +8,7 @@ contract Play is Script {
     function run() external {
         // Get the deployed contract address
         address payable fapAddress = payable(
-            0x58E121b2196b150923547dC03C637772e66CdFC3
+            0x48B5e936600B3F6894aDaD77b106872F3035bCb6
         );
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
 

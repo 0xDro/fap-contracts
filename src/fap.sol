@@ -11,7 +11,7 @@ contract Fap is ReentrancyGuard {
     uint256 public constant MAX_WAIT_TIME = 3600; // 1 hour in seconds
     uint256 public constant MIN_WAIT_TIME = 60; // 1 minute in seconds
     uint256 public constant INITIAL_POOL = 1 ether;
-    uint256 public constant FEE_PERCENTAGE = 1; // 1% fee
+    uint256 public constant FEE_PERCENTAGE = 5; // 1% fee
 
     // Game state variables
     uint256 public lastPlayedTime;
